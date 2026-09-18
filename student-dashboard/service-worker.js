@@ -1,42 +1,31 @@
-const CACHE_NAME = 'study-dashboard-v2';
+const CACHE_NAME = 'studymate-ph-v1';
 const ASSETS = [
-  './',
-  './index.html',
-  './style.css',
-  './app.js'
+  '/',
+  '/index.html',
+  '/style.css',
+  '/app.js'
 ];
 
-// Install — cache all files
+// Install — Cache files
 self.addEventListener('install', e => {
-  console.log('[SW] Installing…');
   e.waitUntil(
     caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS))
-     .then(() => self.skipWaiting())
+      .then(() => self.skipWaiting())
   );
 });
 
-// Activate — delete old caches
+// Activate — Delete old cache
 self.addEventListener('activate', e => {
-  console.log('[SW] Activating…');
   e.waitUntil(
-    caches.keys().then(names =>
-      Promise.all(names.filter(n => n!==CACHE_NAME).map(n => caches.delete(n)))
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
 
-// Fetch — serve from cache first, then network
+// Fetch — Serve from cache when offline
 self.addEventListener('fetch', e => {
   e.respondWith(
-    caches.match(e.request).then(cached => {
-      // Return cached version OR fetch from network
-      return cached || fetch(e.request).then(res => {
-        // Cache new files
-        return caches.open(CACHE_NAME).then(cache => {
-          cache.put(e.request, res.clone());
-          return res;
-        });
-      });
-    })
+    caches.match(e.request).then(res => res || fetch(e.request))
   );
 });
