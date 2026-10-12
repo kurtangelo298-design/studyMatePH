@@ -1,0 +1,18 @@
+{
+  "name": "TaskHive \u2014 Plan Study Achieve",
+  "short_name": "TaskHive",
+  "description": "Student productivity app \u2014 tasks, schedule, notes, grades, budget. Works offline.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#EFF6FF",
+  "theme_color": "#6366F1",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%236366F1'/><text x='50' y='72' font-size='55' text-anchor='middle'>\ud83d\udc1d</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
