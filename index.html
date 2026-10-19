@@ -9,13 +9,11 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>TaskHive — Plan • Study • Achieve</title>
 <script type="module">
-  // Import Firebase SDKs
   import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
   import { getAuth } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js";
-  import { getFirestore } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, getDoc, collection, addDoc, getDocs, query, where, onSnapshot, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
   import { getAnalytics } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-analytics.js";
 
-  // Your Firebase configuration
   const firebaseConfig = {
     apiKey: "AIzaSyCOGWC4E0qiHyoiOWOA0_NgqtiQV9K5U4A",
     authDomain: "taskhive-d5533.firebaseapp.com",
@@ -26,17 +24,20 @@
     measurementId: "G-2DJ00CM5F0"
   };
 
-  // Initialize Firebase
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
   const db = getFirestore(app);
   const analytics = getAnalytics(app);
 
-  // Make available globally for the app
   window.firebaseApp = app;
   window.firebaseAuth = auth;
   window.firebaseDb = db;
+  // I-expose ang Firestore helpers para magamit ng classic script sa baba
+  window.fs = { doc, setDoc, getDoc, collection, addDoc, getDocs, query, where, onSnapshot, updateDoc, serverTimestamp };
+  window.fsReady = true;
+  console.log("✅ Firebase + Firestore ready");
 </script>
+
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -549,18 +550,96 @@ function showModal(id){$(id).classList.add('show')}
 function closeModal(id){$(id).classList.remove('show')}
 function clearErrs(prefix){document.querySelectorAll('#'+prefix+' .error-text').forEach(function(e){e.classList.remove('show')});document.querySelectorAll('#'+prefix+' .input-error').forEach(function(e){e.classList.remove('input-error')})}
 
-// ===== Storage =====
+// ===== Storage (localStorage cache + Firestore mirror) =====
+function fsReady(){return !!(window.fs && window.firebaseDb)}
+function fsSet(path, data){
+  try{
+    if(!fsReady()) return;
+    var d = window.fs.doc(window.firebaseDb, path);
+    window.fs.setDoc(d, data, {merge:true}).catch(function(e){console.warn('FS write fail:',path,e)});
+  }catch(e){}
+}
+function fsGet(path, cb){
+  try{
+    if(!fsReady()){ cb(null); return; }
+    window.fs.getDoc(window.fs.doc(window.firebaseDb, path))
+      .then(function(d){ cb(d.exists ? d.data() : null); })
+      .catch(function(){ cb(null); });
+  }catch(e){ cb(null); }
+}
+
 function getUsers(){try{return JSON.parse(localStorage.getItem('sm_users')||'[]')}catch(e){return[]}}
-function saveUsers(a){localStorage.setItem('sm_users',JSON.stringify(a))}
+function saveUsers(a){
+  localStorage.setItem('sm_users',JSON.stringify(a));
+  // 👉 i-mirror ang bawat user sa Firestore collection "users"
+  try{ a.forEach(function(u){
+    fsSet('users/'+u.id, {
+      name:u.name, email:u.email, studentId:u.studentId,
+      courseYear:u.courseYear, joinDate:u.joinDate, theme:u.theme,
+      isAdmin:!!u.isAdmin, premium:u.premium||{status:'free'},
+      updatedAt:(window.fs?window.fs.serverTimestamp():null)
+    });
+  }); }catch(e){}
+}
 function getSession(){return localStorage.getItem('sm_session')||sessionStorage.getItem('sm_session_tmp')||null}
 function setSession(u){if(u)localStorage.setItem('sm_session',u);else localStorage.removeItem('sm_session')}
 function currentUser(){var s=getSession();if(!s)return null;var us=getUsers();for(var i=0;i<us.length;i++)if(us[i].id===s)return us[i];return null}
 function updateUser(patch){var us=getUsers(),s=getSession();for(var i=0;i<us.length;i++){if(us[i].id===s){Object.assign(us[i],patch);saveUsers(us);return us[i]}}return null}
 function storeKey(uid){return 'sm_store_'+uid}
 function getStore(){var u=currentUser();if(!u)return null;try{return JSON.parse(localStorage.getItem(storeKey(u.id))||'null')}catch(e){return null}}
-function saveStore(obj){var u=currentUser();if(!u)return;localStorage.setItem(storeKey(u.id),JSON.stringify(obj))}
-function gset(key,val){localStorage.setItem(key,JSON.stringify(val))}
+function saveStore(obj){
+  var u=currentUser();if(!u)return;
+  localStorage.setItem(storeKey(u.id),JSON.stringify(obj));
+  // 👉 i-mirror ang buong user data (tasks, schedule, notes, grades...) sa Firestore "userData/{uid}"
+  fsSet('userData/'+u.id, obj);
+}
+function gset(key,val){
+  localStorage.setItem(key,JSON.stringify(val));
+  // 👉 i-mirror ang SHARED data (friends, messages, groups, online) sa Firestore para makita ng ibang user
+  if(key==='sm_requests')        fsSet('shared/requests',      {value:val});
+  else if(key==='sm_messages')   fsSet('shared/messages',      {value:val});
+  else if(key==='sm_groups')     fsSet('shared/groups',        {value:val});
+  else if(key==='sm_group_messages') fsSet('shared/groupMessages',{value:val});
+  else if(key==='sm_online')     fsSet('shared/online',        {value:val});
+  else if(key==='sm_typing')     fsSet('shared/typing',        {value:val});
+}
 function gget(key,def){try{var v=JSON.parse(localStorage.getItem(key));return v==null?def:v}catch(e){return def}}
+
+// ===== Sync FROM Firebase pababa sa local cache (para gumana ang chat cross-device) =====
+function syncFromFirebase(){
+  if(!fsReady()) return;
+  var map = {
+    'shared/requests':'sm_requests',
+    'shared/messages':'sm_messages',
+    'shared/groups':'sm_groups',
+    'shared/groupMessages':'sm_group_messages',
+    'shared/online':'sm_online'
+  };
+  Object.keys(map).forEach(function(path){
+    fsGet(path, function(data){
+      if(!data || !Array.isArray(data.value)) return;
+      var key = map[path];
+      var local = gget(key, []);
+      if(data.value.length > local.length){
+        localStorage.setItem(key, JSON.stringify(data.value));
+        if(currentPage==='friends') renderFriends();
+        if(currentPage==='chat')    renderChat();
+      }
+    });
+  });
+  // i-pull din ang users list mula Firestore
+  try{
+    window.fs.getDocs(window.fs.collection(window.firebaseDb,'users')).then(function(snap){
+      var us = getUsers(); var changed = false;
+      snap.forEach(function(d){
+        var x = d.data(); x.id = d.id;
+        if(!us.find(function(u){return u.id===x.id})){ us.push(x); changed = true; }
+      });
+      if(changed) saveUsers(us);
+    }).catch(function(){});
+  }catch(e){}
+}
+
 
 // ===== Sample data seeding =====
 function seedStore(){
